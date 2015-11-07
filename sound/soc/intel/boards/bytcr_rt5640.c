@@ -31,11 +31,57 @@
 #include "../../codecs/rt5640.h"
 #include "../atom/sst-atom-controls.h"
 
+#define BYT_PLAT_CLK_3_HZ	25000000
+
+static int platform_clock_control(struct snd_soc_dapm_widget *w,
+		struct snd_kcontrol *k, int  event)
+{
+	struct snd_soc_dapm_context *dapm = w->dapm;
+	struct snd_soc_card *card = dapm->card;
+	struct snd_soc_codec *codec;
+
+	pr_debug("%s: Enter.\n", __func__);
+
+	list_for_each_entry(codec, &card->codec_dev_list, card_list) {
+		if (!strstr(codec->component.name, "i2c-10EC5640:00"))
+			continue;
+		else {
+			break;
+		}
+	}
+
+	if (!codec) {
+		pr_err("%s: Codec not found; Unable to set platform clock\n",
+			__func__);
+		return -EIO;
+	}
+	if (SND_SOC_DAPM_EVENT_ON(event)) {
+
+		pr_debug("%s: Platform-clk turned on.\n", __func__);
+		snd_soc_codec_set_sysclk(codec, RT5640_SCLK_S_PLL1, 0,
+			BYT_PLAT_CLK_3_HZ, SND_SOC_CLOCK_IN);
+		snd_soc_write(codec, RT5640_ADDA_CLK1, 0x0014);
+	} else {
+		/* Set codec clock source to internal clock before
+		   turning off the platform clock. Codec needs clock
+		   for Jack detection and button press */
+		snd_soc_write(codec, RT5640_ADDA_CLK1, 0x7774);
+		snd_soc_codec_set_sysclk(codec, RT5640_SCLK_S_RCCLK,
+				0, 0, SND_SOC_CLOCK_IN);
+		pr_debug("%s: Platform-clk turned off.\n", __func__);
+	}
+
+	return 0;
+}
+
 static const struct snd_soc_dapm_widget byt_rt5640_widgets[] = {
 	SND_SOC_DAPM_HP("Headphone", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("Internal Mic", NULL),
 	SND_SOC_DAPM_SPK("Speaker", NULL),
+	SND_SOC_DAPM_SUPPLY("Platform Clock", SND_SOC_NOPM, 0, 0,
+			platform_clock_control, SND_SOC_DAPM_PRE_PMU |
+			SND_SOC_DAPM_POST_PMD),
 };
 
 static const struct snd_soc_dapm_route byt_rt5640_audio_map[] = {
@@ -45,6 +91,11 @@ static const struct snd_soc_dapm_route byt_rt5640_audio_map[] = {
 	{"codec_in0", NULL, "ssp2 Rx"},
 	{"codec_in1", NULL, "ssp2 Rx"},
 	{"ssp2 Rx", NULL, "AIF1 Capture"},
+
+	{"Headphone", NULL, "Platform Clock"},
+	{"Headset Mic", NULL, "Platform Clock"},
+	{"Internal Mic", NULL, "Platform Clock"},
+	{"Speaker", NULL, "Platform Clock"},
 
 	{"Headset Mic", NULL, "MICBIAS1"},
 	{"IN2P", NULL, "Headset Mic"},
@@ -105,7 +156,7 @@ static int byt_rt5640_aif1_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 	}
 
-	ret = snd_soc_dai_set_pll(codec_dai, 0, RT5640_PLL1_S_BCLK1,
+	ret = snd_soc_dai_set_pll(codec_dai, 0,  RT5640_PLL1_S_MCLK/*RT5640_PLL1_S_BCLK1*/,
 				  params_rate(params) * 50,
 				  params_rate(params) * 512);
 	if (ret < 0) {
